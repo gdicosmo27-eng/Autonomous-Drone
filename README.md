@@ -1,8 +1,13 @@
+
 # FPV Drone with AI Vision Pipeline
 A custom-built FPV quadcopter with an AI vision and notification pipeline built in python. It captures aerial footage, analyzes it in real time using a vision language model, and sends push notifications to my phone when it detects a preconfigured object. The drone also supports GPS waypoint navigation through its BN-880 onboard GPS and BetaFlight software.
 
+<img width="582" height="502" alt="Quadcopter On Workbench" src="https://github.com/user-attachments/assets/67966e43-e4f7-428d-a3d2-7100966e24e1" />
+
 ## What It Does
 The drone flies over an area and streams video to my laptop via its Caddx Ratel2 camera and a 5.8Ghz analog VTX link. A python script captures the live feed from my laptop on a timed basis, sending each frame to Claude's vision API. If the object the program is configured to detect is detected past a certain confidence threshold, a push notification is sent to my phone via ntfy.sh. Because the drone doesn't have any onboard computing power, the drone could be created cheaply and with a small footprint (5" propeller diameter).
+
+<img width="590" height="1278" alt="Detection Push Notification" src="https://github.com/user-attachments/assets/b4b6ae1b-c582-4a3a-8621-3613a03294c8" />
 
 ## Hardware
 
