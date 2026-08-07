@@ -27,13 +27,13 @@ The drone flies over an area and streams video to my laptop via its Caddx Ratel2
 - **Analog VTX via EWRF receiver** - The ERWF receiver is recognized natively on Macs and doesn't require any dependencies. This made it an easier option compared to the typical headset setup for FPV drones.
 
 ## Software Architecture
-The drone is flown manually or on a GPS-waypoint mission through the BetaFlight software. The software covers a one-way observe and alert loop where it captures a frame from the live VTX feed and asks the vision model if the target is in the frame. If the confidence is above threshold and a notification hasn't already been sent (Repeat notifications are handled with a cooldown window) a notification is pushed to the user. The agent folder is subdivided into capture, vision, notify, and outcome.py files, with loop.py handling the loop between checks. The vision evaluator takes a natural-language description of a target (such as "a blue ford bronco" or a "a black mini cooper"
+The drone is flown manually or on a GPS-waypoint mission through the BetaFlight software. The software covers a one-way observe and alert loop where it captures a frame from the live VTX feed and asks the vision model if the target is in the frame. If the confidence is above threshold and a notification hasn't already been sent (Repeat notifications are handled with a cooldown window) a notification is pushed to the user. The agent folder is subdivided into capture, vision, notify, and outcome.py files, with loop.py handling the loop between checks. The vision evaluator takes a natural-language description of a target (such as "a blue ford bronco" or a "a black mini cooper")
 
 ## Running The Software
 While the drone is in the air and streaming video to the laptop, the user can run this python command in the terminal to start vision analysis:
-'''Bash
+```Bash
 python3 main.py --target "type in plain language what the desired target is here"
-'''
+```
 The user can also pass --threshold and --interval arguments to set override the desired threshold and interval values.
 
 ## Future Plans
