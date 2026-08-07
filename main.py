@@ -1,135 +1,86 @@
-import threading
+import argparse
+import os
 import time
 
-from agent.actions import Action
-from agent.confirmation import ConfirmationBroker, ConfirmationDenied, ConfirmationTimeout
-from agent.flight_controller import BatteryState, StubFlightController
-from agent.loop import AgentConfig, AgentLoop
-from agent.notifier import ConsoleNotifier, NotifyLevel, TwilioNotifier
-from agent.sms_client import StubTwilioClient
-from agent.sms_webhook import handle_sms_reply
-from agent.vision import DetectionResult, StubVisionEvaluator
+from agent.capture import FrameSource, ScreenGrabFrameSource, StubFrameSource
+from agent.loop import WatchLoop
+from agent.notifier import CompositeNotifier, ConsoleNotifier, NtfyNotifier, StubNotifier
+from agent.notify_config import NtfyConfig
+from agent.outcome import Outcome
+from agent.vision import ClaudeVisionEvaluator, DetectionResult, StubVisionEvaluator, VisionEvaluator
+from agent.watch_config import WatchConfig
+
+# Watch the VTX feed on screen, evaluate each
+# frame against the configured target, and push an alert to the operator's
+# phone (via ntfy.sh) when it's seen.
 
 
-def run_autonomous_examples():
-    print("\n-- autonomous decisions --")
-    controller = StubFlightController()
-    loop = AgentLoop(
-        vision=StubVisionEvaluator(DetectionResult(detected=True, confidence=0.9, label="car")),
-        flight_controller=controller,
-        notifier=ConsoleNotifier(),
-        confirmation_broker=ConfirmationBroker(),
-    )
-    assert loop.process_frame(frame=None) == Action.LOITER
-
-    loop.vision = StubVisionEvaluator(DetectionResult(detected=True, confidence=0.5, label="car?"))
-    assert loop.process_frame(frame=None) == Action.CAPTURE_FRAMES
-    assert loop.process_frame(frame=None) == Action.CAPTURE_FRAMES
-    assert loop.process_frame(frame=None) == Action.CONTINUE_MISSION  # streak limit hit
-
-    loop.vision = StubVisionEvaluator(DetectionResult(detected=False, confidence=0.05))
-    assert loop.process_frame(frame=None) == Action.CONTINUE_MISSION
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Watch the VTX feed for a target and alert the operator.")
+    parser.add_argument("--target", help="Natural-language description of what to watch for, e.g. 'a blue Ford Bronco'. Overrides WATCH_TARGET.")
+    parser.add_argument("--threshold", type=float, help="Confidence threshold (0.0-1.0) required to alert. Overrides WATCH_CONFIDENCE_THRESHOLD.")
+    parser.add_argument("--interval", type=float, help="Seconds between frame captures. Overrides WATCH_CAPTURE_INTERVAL_S.")
+    return parser.parse_args()
 
 
-def run_battery_rth_example():
-    print("\n-- battery RTH (fail-open, no confirmation wait) --")
-    controller = StubFlightController(battery_state=BatteryState(voltage=14.0, percent=15.0))
-    loop = AgentLoop(
-        vision=StubVisionEvaluator(),
-        flight_controller=controller,
-        notifier=ConsoleNotifier(),
-        confirmation_broker=ConfirmationBroker(),
-    )
-    action = loop.process_frame(frame=None)
-    assert action == Action.BATTERY_RTH
+def build_notifier() -> CompositeNotifier:
+    notifiers = [ConsoleNotifier()]
+    if os.environ.get("AGENT_NOTIFY_STUB") == "1":
+        notifiers.append(StubNotifier())
+    else:
+        ntfy_config = NtfyConfig.from_env()
+        notifiers.append(NtfyNotifier(ntfy_config.topic_url, access_token=ntfy_config.access_token))
+    return CompositeNotifier(notifiers)
 
 
-def run_user_rth_examples():
-    print("\n-- user-confirmed RTH --")
-    broker = ConfirmationBroker()
-    loop = AgentLoop(
-        vision=StubVisionEvaluator(),
-        flight_controller=StubFlightController(),
-        notifier=ConsoleNotifier(),
-        confirmation_broker=broker,
-        config=AgentConfig(rth_confirmation_timeout_s=2.0),
+def build_vision(watch_config: WatchConfig) -> VisionEvaluator:
+    if os.environ.get("AGENT_VISION_STUB") == "1":
+        # Deterministic "always detected" stub, for smoke-testing the loop
+        # without burning real vision API calls.
+        return StubVisionEvaluator(DetectionResult(detected=True, confidence=0.95, label="stub target"))
+    return ClaudeVisionEvaluator(
+        target_description=watch_config.target_description,
+        model=watch_config.vision_model,
     )
 
-    def approve_soon():
-        time.sleep(0.2)
-        pending = broker.pending_requests()
-        if pending:
-            broker.approve(pending[0].request_id)
 
-    threading.Thread(target=approve_soon).start()
-    assert loop.request_return_to_home(reason="user tapped RTH") == Action.RETURN_TO_HOME
+def build_frame_source() -> FrameSource:
+    if os.environ.get("AGENT_CAPTURE_STUB") == "1":
+        return StubFrameSource(fixed_bytes=b"stub-frame")
+    return ScreenGrabFrameSource()
 
-    print("\n-- user-denied RTH --")
 
-    def deny_soon():
-        time.sleep(0.2)
-        pending = broker.pending_requests()
-        if pending:
-            broker.deny(pending[0].request_id)
+def main() -> None:
+    args = parse_args()
+    watch_config = WatchConfig.from_env(
+        target_override=args.target,
+        threshold_override=args.threshold,
+        interval_override=args.interval,
+    )
 
-    threading.Thread(target=deny_soon).start()
+    notifier = build_notifier()
+    vision = build_vision(watch_config)
+    frame_source = build_frame_source()
+    loop = WatchLoop(vision=vision, notifier=notifier, config=watch_config)
+
+    print(f"[main] Watching for {watch_config.target_description!r} "
+          f"(threshold={watch_config.confidence_threshold}, cooldown={watch_config.cooldown_s}s, "
+          f"interval={watch_config.capture_interval_s}s)")
+
     try:
-        loop.request_return_to_home(reason="agent requested, but should be denied")
-    except ConfirmationDenied:
-        print("(denied as expected)")
-
-    print("\n-- RTH confirmation timeout --")
-    try:
-        loop.request_return_to_home(reason="nobody answers")
-    except ConfirmationTimeout:
-        print("(timed out as expected)")
-
-
-def run_twilio_notifier_examples():
-    print("\n-- Twilio notifier (SMS on ACTION/CRITICAL only) --")
-    stub_client = StubTwilioClient()
-    notifier = TwilioNotifier(stub_client, from_number="+15550001111", to_number="+15550002222")
-
-    notifier.notify("routine info, should not text", NotifyLevel.INFO)
-    assert stub_client.sent == []
-
-    notifier.notify("loitering", NotifyLevel.ACTION)
-    notifier.notify("battery critical", NotifyLevel.CRITICAL)
-    assert len(stub_client.sent) == 2
-
-    print("\n-- SMS reply-to-confirm (FIFO on multiple pending requests) --")
-    broker = ConfirmationBroker()
-    operator_number = "+15550002222"
-
-    older = broker.request(Action.RETURN_TO_HOME, reason="agent requested RTH")
-    time.sleep(0.01)
-    newer = broker.request(Action.RETURN_TO_HOME, reason="second RTH request")
-
-    reply = handle_sms_reply(operator_number, "yes", broker, operator_number)
-    assert reply == "return_to_home approved."
-    assert broker.wait(older.request_id) is True  # agent consumes the approval, as request_return_to_home does
-    remaining = broker.pending_requests()
-    assert [req.request_id for req in remaining] == [newer.request_id]
-
-    print("\n-- SMS reply ignored from unknown number --")
-    reply = handle_sms_reply("+19995550000", "yes", broker, operator_number)
-    assert reply == ""
-    assert len(broker.pending_requests()) == 1
-
-    handle_sms_reply(operator_number, "no", broker, operator_number)
-    try:
-        broker.wait(newer.request_id)
-        assert False, "expected ConfirmationDenied"
-    except ConfirmationDenied:
-        print("(denied as expected)")
-
-    print("\n-- SMS reply with no pending confirmation --")
-    reply = handle_sms_reply(operator_number, "yes", broker, operator_number)
-    assert reply == "No pending confirmation."
+        while True:
+            try:
+                frame = frame_source.capture()
+                outcome = loop.process_frame(frame)
+                if outcome == Outcome.NOT_DETECTED:
+                    print("[main] no detection this frame")
+            except Exception as exc:
+                # A bad frame or a vision/SMS hiccup should never kill the loop.
+                print(f"[main] frame processing failed: {exc}")
+            time.sleep(watch_config.capture_interval_s)
+    except KeyboardInterrupt:
+        print("\n[main] stopped by operator")
 
 
 if __name__ == "__main__":
-    run_autonomous_examples()
-    run_battery_rth_example()
-    run_user_rth_examples()
-    run_twilio_notifier_examples()
+    main()

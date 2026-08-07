@@ -3,8 +3,9 @@ import subprocess
 import tempfile
 from abc import ABC, abstractmethod
 
-# This file implements screen capture of the VTX ground-station feed so
-# frames can be handed to a VisionEvaluator for evaluation
+
+# This file implements screen capture of the VTX feed from my mac so
+# the frames can be sent to VisionEvaluator
 
 class FrameSource(ABC):
     @abstractmethod
@@ -13,7 +14,7 @@ class FrameSource(ABC):
 
 class ScreenGrabFrameSource(FrameSource):
     """Captures the full primary display via macOS's built-in `screencapture`
-    CLI and returns JPEG-encoded bytes, ready to send to a vision evaluator."""
+    CLI and returns JPEG-encoded bytes"""
 
     def capture(self) -> bytes:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -26,8 +27,7 @@ class ScreenGrabFrameSource(FrameSource):
             os.remove(tmp_path)
 
 class StubFrameSource(FrameSource):
-    """Placeholder until the real screen-grab capture is exercised on a
-    machine with a display. Records call count for test assertions."""
+    """Placeholder stub file"""
 
     def __init__(self, fixed_bytes: bytes = b""):
         self._fixed_bytes = fixed_bytes
