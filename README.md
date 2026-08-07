@@ -7,7 +7,7 @@ A custom-built FPV quadcopter with an AI vision and notification pipeline built 
 ## What It Does
 The drone flies over an area and streams video to my laptop via its Caddx Ratel2 camera and a 5.8Ghz analog VTX link. A python script captures the live feed from my laptop on a timed basis, sending each frame to Claude's vision API. If the object the program is configured to detect is detected past a certain confidence threshold, a push notification is sent to my phone via ntfy.sh. Because the drone doesn't have any onboard computing power, the drone could be created cheaply and with a small footprint (5" propeller diameter).
 
-<img width="590" height="1278" alt="Detection Push Notification" src="https://github.com/user-attachments/assets/b4b6ae1b-c582-4a3a-8621-3613a03294c8" />
+<img width="359" height="337" alt="Screen Shot 2026-08-07 at 4 27 43 PM" src="https://github.com/user-attachments/assets/b5aaf758-2443-40af-bdd4-5001e594cc5e" />
 
 ## Hardware
 
